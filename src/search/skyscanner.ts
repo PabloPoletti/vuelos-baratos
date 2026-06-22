@@ -89,14 +89,28 @@ interface SkyFlightsResponse {
   };
 }
 
+/**
+ * Actual response shape from /api/v1/flights/searchAirport (verified in prod).
+ * skyId and entityId are NOT top-level — they live inside
+ * navigation.relevantFlightParams.
+ */
+interface SkyAirportItem {
+  presentation?: { title?: string; suggestionTitle?: string };
+  navigation: {
+    entityId: string;
+    entityType: string; // "AIRPORT" | "CITY" | "COUNTRY" | ...
+    localizedName?: string;
+    relevantFlightParams: {
+      skyId: string;
+      entityId: string;
+      flightPlaceType?: string;
+    };
+  };
+}
+
 interface SkyAirportResponse {
   status: boolean;
-  data?: Array<{
-    skyId: string;
-    entityId: string;
-    presentation?: { title: string };
-    navigation?: { entityType: string };
-  }>;
+  data?: SkyAirportItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -171,25 +185,45 @@ export async function resolveAirport(
   );
 
   if (!body.status || !Array.isArray(body.data) || body.data.length === 0) {
-    throw new Error(`Could not resolve airport for IATA code "${iata}"`);
+    throw new Error(`Skyscanner: airport not found for "${iata}"`);
   }
 
-  // Prefer an airport-level result whose skyId closely matches the IATA code.
-  // Fall back to the first element if nothing matches.
-  const preferred =
-    body.data.find(
-      (d) =>
-        d.navigation?.entityType === "AIRPORT" &&
-        (d.skyId.toUpperCase() === iata || d.skyId.startsWith(iata[0] ?? "")),
-    ) ?? body.data[0];
+  // skyId and entityId live inside navigation.relevantFlightParams (verified
+  // against the live API response — they are NOT top-level fields).
+  // Selection priority:
+  //   1. AIRPORT whose relevantFlightParams.skyId matches the IATA exactly
+  //   2. Any result whose relevantFlightParams.skyId matches (covers city codes)
+  //   3. First AIRPORT in the list
+  //   4. First result as last resort
+  const exactMatch = body.data.find(
+    (d) =>
+      d.navigation?.entityType === "AIRPORT" &&
+      d.navigation.relevantFlightParams?.skyId?.toUpperCase() === iata,
+  );
+  const skyIdMatch = body.data.find(
+    (d) =>
+      d.navigation.relevantFlightParams?.skyId?.toUpperCase() === iata,
+  );
+  const firstAirport = body.data.find(
+    (d) => d.navigation?.entityType === "AIRPORT",
+  );
+  const preferred = exactMatch ?? skyIdMatch ?? firstAirport ?? body.data[0];
 
   if (!preferred) {
-    throw new Error(`Empty airport data for "${iata}"`);
+    throw new Error(`Skyscanner: airport not found for "${iata}"`);
+  }
+
+  const flightParams = preferred.navigation?.relevantFlightParams;
+  if (!flightParams?.skyId || !flightParams?.entityId) {
+    throw new Error(
+      `Skyscanner: could not extract skyId/entityId for airport "${iata}" ` +
+        `(got: ${JSON.stringify(preferred.navigation)})`,
+    );
   }
 
   const result: AirportResult = {
-    skyId: preferred.skyId,
-    entityId: preferred.entityId,
+    skyId: flightParams.skyId,
+    entityId: flightParams.entityId,
   };
 
   if (kv) {
