@@ -35,8 +35,10 @@ src/
     skyscanner.ts           Cliente Skyscanner (Sky Scrapper / RapidAPI)
     cache.ts                Helpers de caché KV (TTLs, keys, read/write)
     search-dates.ts         Motor de búsqueda por rango de fechas + detector de ofertas
+    multi-city.ts           Motor de multidestino (modos fixed y optimize)
 scripts/
   test-search-dates.js      Script de prueba manual para /api/search-dates
+  test-multi-city.js        Script de prueba manual para /api/multi-city
 wrangler.toml
 ```
 
@@ -236,6 +238,107 @@ BASE_URL=http://localhost:8787 node scripts/test-search-dates.js
 | `SKYSCANNER_API_KEY` | Secret | `wrangler secret put SKYSCANNER_API_KEY` |
 | `SEARCH_CACHE` | KV binding | `wrangler kv namespace create SEARCH_CACHE` + actualizar `wrangler.toml` |
 | `APP_ENV` | Var (wrangler.toml) | Ya configurado como `production` |
+
+## Endpoint POST /api/multi-city
+
+Busca vuelos para itinerarios de múltiples destinos usando **solo Google Flights**.
+Soporta dos modos: orden fijo o búsqueda del orden óptimo.
+
+### Modo "fixed"
+
+El usuario especifica el orden exacto de los destinos con fechas explícitas.
+Busca cada tramo como vuelo one-way y suma los precios.
+
+**Body:**
+```json
+{
+  "mode": "fixed",
+  "origin": "COR",
+  "stops": [
+    { "destination": "MIA", "date": "2026-08-01" },
+    { "destination": "PUJ", "date": "2026-08-10" }
+  ],
+  "returnDate": "2026-08-20",
+  "adults": 1,
+  "currency": "USD"
+}
+```
+
+Los tramos resultantes son: `COR→MIA` (01/08), `MIA→PUJ` (10/08), `PUJ→COR` (20/08).
+
+**Respuesta:**
+```jsonc
+{
+  "mode": "fixed",
+  "origin": "COR",
+  "totalPrice": 1420,       // null si algún tramo falló
+  "currency": "USD",
+  "legs": [
+    { "from": "COR", "to": "MIA", "date": "2026-08-01", "price": 520, "currency": "USD", "error": null },
+    { "from": "MIA", "to": "PUJ", "date": "2026-08-10", "price": 180, "currency": "USD", "error": null },
+    { "from": "PUJ", "to": "COR", "date": "2026-08-20", "price": 720, "currency": "USD", "error": null }
+  ]
+}
+```
+
+### Modo "optimize"
+
+El usuario especifica el conjunto de destinos (sin orden) y el sistema evalúa
+**todas las permutaciones posibles** para encontrar el orden más barato.
+
+- Máximo **6 destinos** (6! = 720 permutaciones)
+- Máximo **40 tramos únicos** después de memoización (3 destinos → 18 tramos, 4 → 44)
+- Las fechas intermedias se calculan como `startDate + i × nightsPerStop`
+- El tramo de regreso usa siempre `endDate`
+- Memoización en memoria + KV: tramos idénticos entre permutaciones no se buscan dos veces
+
+**Body:**
+```json
+{
+  "mode": "optimize",
+  "origin": "COR",
+  "destinations": ["MIA", "PUJ", "NYC"],
+  "startDate": "2026-08-01",
+  "endDate": "2026-08-20",
+  "nightsPerStop": 3,
+  "adults": 1,
+  "currency": "USD"
+}
+```
+
+**Respuesta:**
+```jsonc
+{
+  "mode": "optimize",
+  "origin": "COR",
+  "destinations": ["MIA", "PUJ", "NYC"],
+  "best": {
+    "order": ["NYC", "MIA", "PUJ"],
+    "totalPrice": 1180,
+    "currency": "USD",
+    "legs": [
+      { "from": "COR", "to": "NYC", "date": "2026-08-01", "price": 410, "currency": "USD", "error": null },
+      { "from": "NYC", "to": "MIA", "date": "2026-08-04", "price": 120, "currency": "USD", "error": null },
+      { "from": "MIA", "to": "PUJ", "date": "2026-08-07", "price": 90,  "currency": "USD", "error": null },
+      { "from": "PUJ", "to": "COR", "date": "2026-08-20", "price": 560, "currency": "USD", "error": null }
+    ]
+  },
+  "alternatives": [ /* 3 siguientes mejores permutaciones */ ],
+  "stats": {
+    "permutationsEvaluated": 6,
+    "uniqueLegsSearched": 18,
+    "uniqueLegsCachedInKv": 0
+  }
+}
+```
+
+### Test manual
+
+```bash
+node scripts/test-multi-city.js
+# contra local:
+BASE_URL=http://localhost:8787 node scripts/test-multi-city.js
+```
 
 ## Etapas futuras
 

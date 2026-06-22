@@ -26,6 +26,17 @@ import {
   MAX_DATE_SEARCHES,
   searchByDateRange,
 } from "./search/search-dates";
+import {
+  MAX_DESTINATIONS,
+  MAX_UNIQUE_LEGS,
+  runFixedMode,
+  runOptimizeMode,
+} from "./search/multi-city";
+import type {
+  FixedModeOptions,
+  FixedStop,
+  OptimizeModeOptions,
+} from "./search/multi-city";
 import type {
   FlightResult,
   ResultSource,
@@ -260,6 +271,131 @@ async function handleSearchDates(
 }
 
 // ---------------------------------------------------------------------------
+// /api/multi-city handler  (POST)
+// ---------------------------------------------------------------------------
+
+async function handleMultiCity(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed — use POST" }, 405);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (typeof body !== "object" || body === null) {
+    return jsonResponse({ error: "Body must be a JSON object" }, 400);
+  }
+
+  const b = body as Record<string, unknown>;
+  const mode = b["mode"];
+
+  // ---- Mode: fixed ----
+  if (mode === "fixed") {
+    const origin = typeof b["origin"] === "string" ? b["origin"].toUpperCase() : "";
+    const returnDate = typeof b["returnDate"] === "string" ? b["returnDate"] : "";
+    const rawStops = b["stops"];
+
+    if (!IATA_RE.test(origin))
+      return jsonResponse({ error: "origin must be a 3-letter IATA code" }, 400);
+    if (!DATE_RE.test(returnDate))
+      return jsonResponse({ error: "returnDate must be YYYY-MM-DD" }, 400);
+    if (!Array.isArray(rawStops) || rawStops.length === 0)
+      return jsonResponse({ error: "stops must be a non-empty array" }, 400);
+
+    const stops: FixedStop[] = [];
+    for (const [i, s] of rawStops.entries()) {
+      if (typeof s !== "object" || s === null)
+        return jsonResponse({ error: `stops[${i}] must be an object` }, 400);
+      const stop = s as Record<string, unknown>;
+      const dest = typeof stop["destination"] === "string"
+        ? stop["destination"].toUpperCase()
+        : "";
+      const date = typeof stop["date"] === "string" ? stop["date"] : "";
+      if (!IATA_RE.test(dest))
+        return jsonResponse({ error: `stops[${i}].destination must be a 3-letter IATA code` }, 400);
+      if (!DATE_RE.test(date))
+        return jsonResponse({ error: `stops[${i}].date must be YYYY-MM-DD` }, 400);
+      stops.push({ destination: dest, date });
+    }
+
+    const opts: FixedModeOptions = {
+      origin,
+      stops,
+      returnDate,
+      adults: typeof b["adults"] === "number" ? b["adults"] : 1,
+      currency: typeof b["currency"] === "string" ? b["currency"].toUpperCase() : "USD",
+    };
+
+    const result = await runFixedMode(opts, env.SEARCH_CACHE);
+    if ("error" in result) return jsonResponse({ error: result.error }, result.status);
+    return jsonResponse(result);
+  }
+
+  // ---- Mode: optimize ----
+  if (mode === "optimize") {
+    const origin = typeof b["origin"] === "string" ? b["origin"].toUpperCase() : "";
+    const startDate = typeof b["startDate"] === "string" ? b["startDate"] : "";
+    const endDate = typeof b["endDate"] === "string" ? b["endDate"] : "";
+    const nightsPerStop = typeof b["nightsPerStop"] === "number" ? b["nightsPerStop"] : 0;
+    const rawDests = b["destinations"];
+
+    if (!IATA_RE.test(origin))
+      return jsonResponse({ error: "origin must be a 3-letter IATA code" }, 400);
+    if (!DATE_RE.test(startDate))
+      return jsonResponse({ error: "startDate must be YYYY-MM-DD" }, 400);
+    if (!DATE_RE.test(endDate))
+      return jsonResponse({ error: "endDate must be YYYY-MM-DD" }, 400);
+    if (!Number.isInteger(nightsPerStop) || nightsPerStop < 1 || nightsPerStop > 30)
+      return jsonResponse({ error: "nightsPerStop must be an integer between 1 and 30" }, 400);
+    if (!Array.isArray(rawDests) || rawDests.length < 2)
+      return jsonResponse({ error: "destinations must be an array with at least 2 entries" }, 400);
+    if (rawDests.length > MAX_DESTINATIONS)
+      return jsonResponse(
+        { error: `destinations must have at most ${MAX_DESTINATIONS} entries (got ${rawDests.length})` },
+        400,
+      );
+
+    const destinations: string[] = [];
+    for (const [i, d] of rawDests.entries()) {
+      if (typeof d !== "string" || !IATA_RE.test(d.toUpperCase()))
+        return jsonResponse({ error: `destinations[${i}] must be a 3-letter IATA code` }, 400);
+      destinations.push(d.toUpperCase());
+    }
+
+    const opts: OptimizeModeOptions = {
+      origin,
+      destinations,
+      startDate,
+      endDate,
+      nightsPerStop,
+      adults: typeof b["adults"] === "number" ? b["adults"] : 1,
+      currency: typeof b["currency"] === "string" ? b["currency"].toUpperCase() : "USD",
+    };
+
+    const result = await runOptimizeMode(opts, env.SEARCH_CACHE);
+    if ("error" in result) return jsonResponse({ error: result.error }, result.status);
+    return jsonResponse(result);
+  }
+
+  return jsonResponse(
+    {
+      error: `mode must be "fixed" or "optimize" (got ${JSON.stringify(mode)})`,
+      hint: `POST /api/multi-city with body: { "mode": "fixed" | "optimize", ... }`,
+      maxDestinationsForOptimize: MAX_DESTINATIONS,
+      maxUniqueLegs: MAX_UNIQUE_LEGS,
+    },
+    400,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Worker entry point
 // ---------------------------------------------------------------------------
 
@@ -275,6 +411,10 @@ export default {
       return handleSearchDates(request, env);
     }
 
+    if (url.pathname === "/api/multi-city") {
+      return handleMultiCity(request, env);
+    }
+
     if (url.pathname === "/health") {
       return jsonResponse({ status: "ok", env: env.APP_ENV ?? "unknown" });
     }
@@ -286,6 +426,7 @@ export default {
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01",
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01&returnDate=2026-09-15&tripType=round_trip",
           `GET /api/search-dates?origin=MDZ&destination=MIA&startDate=2026-08-01&endDate=2026-08-21&stayDuration=14 (max ${MAX_DATE_SEARCHES} dates)`,
+          `POST /api/multi-city  body: { mode:"fixed"|"optimize", ... } (max ${MAX_DESTINATIONS} destinations)`,
           "GET /health",
         ],
       },
