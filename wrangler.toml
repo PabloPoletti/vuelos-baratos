@@ -11,4 +11,4 @@ APP_ENV = "production"
 # Then replace the placeholder below with the id printed by that command.
 [[kv_namespaces]]
 binding = "SEARCH_CACHE"
-id = "REPLACE_WITH_NAMESPACE_ID"
+id = "d5e6e4f01aad45a9a42718f4168b4e41"
