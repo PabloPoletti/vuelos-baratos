@@ -4,5 +4,11 @@ compatibility_date = "2025-06-01"
 account_id = "1fd499d2836bb7e6955d0986652d97f8"
 
 [vars]
-# Overridable at deploy time; secrets (KIWI_API_KEY) must be set via `wrangler secret put`
 APP_ENV = "production"
+
+# KV namespace for caching flight search results.
+# Create it once with:  wrangler kv namespace create SEARCH_CACHE
+# Then replace the placeholder below with the id printed by that command.
+[[kv_namespaces]]
+binding = "SEARCH_CACHE"
+id = "REPLACE_WITH_NAMESPACE_ID"

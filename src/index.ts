@@ -5,27 +5,45 @@
  *   GET /api/search?origin=X&destination=Y&date=YYYY-MM-DD
  *                  [&returnDate=YYYY-MM-DD] [&tripType=one_way|round_trip]
  *                  [&adults=1] [&currency=USD]
+ *   GET /health
  *
- * Returns combined results from Google Flights + Kiwi, sorted by price.
- * If one source fails, the other's results are returned anyway.
+ * Sources: Google Flights (FlightsFrontendService) + Skyscanner (Sky Scrapper / RapidAPI)
+ * Both run in parallel via Promise.allSettled; a failure in one source never
+ * aborts the other. Results are cached in KV:
+ *   - Google Flights: 1 hour TTL
+ *   - Skyscanner:     24 hours TTL  (conserve the 100 req/month free quota)
  */
 
 import { searchGoogleFlights } from "./search/google-flights";
-import { searchKiwi } from "./search/kiwi";
-import type { FlightResult, SearchOptions, TripType } from "./search/types";
+import { SkyscannerQuotaError, searchSkyscanner } from "./search/skyscanner";
+import {
+  TTL,
+  cacheFlights,
+  flightCacheKey,
+  getCachedFlights,
+} from "./search/cache";
+import type {
+  FlightResult,
+  ResultSource,
+  SearchError,
+  SearchOptions,
+  TripType,
+} from "./search/types";
 
 // ---------------------------------------------------------------------------
-// Environment bindings (declared in wrangler.toml + wrangler secret put)
+// Environment bindings
 // ---------------------------------------------------------------------------
 
 export interface Env {
-  /** Secret: set via `wrangler secret put KIWI_API_KEY` */
-  KIWI_API_KEY?: string;
+  /** KV namespace — bind with `wrangler kv namespace create SEARCH_CACHE` */
+  SEARCH_CACHE: KVNamespace;
+  /** Secret — `wrangler secret put SKYSCANNER_API_KEY` */
+  SKYSCANNER_API_KEY?: string;
   APP_ENV?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Validation helpers
+// Validation
 // ---------------------------------------------------------------------------
 
 const IATA_RE = /^[A-Z]{3}$/;
@@ -71,20 +89,51 @@ function parseSearchOptions(url: URL): SearchOptions | { error: string } {
 }
 
 // ---------------------------------------------------------------------------
-// Response helpers
+// Per-source cached search
 // ---------------------------------------------------------------------------
 
-function json(
+async function fetchGoogleFlights(
+  opts: SearchOptions,
+  kv: KVNamespace,
+): Promise<FlightResult[]> {
+  const key = flightCacheKey("gf", opts);
+  const cached = await getCachedFlights(kv, key);
+  if (cached) return cached;
+
+  const results = await searchGoogleFlights(opts);
+  await cacheFlights(kv, key, results, TTL.GOOGLE_FLIGHTS);
+  return results;
+}
+
+async function fetchSkyscanner(
+  opts: SearchOptions,
+  apiKey: string,
+  kv: KVNamespace,
+): Promise<FlightResult[]> {
+  const key = flightCacheKey("ss", opts);
+  const cached = await getCachedFlights(kv, key);
+  if (cached) return cached;
+
+  const results = await searchSkyscanner(opts, apiKey, kv);
+  await cacheFlights(kv, key, results, TTL.SKYSCANNER);
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Response helper
+// ---------------------------------------------------------------------------
+
+function jsonResponse(
   data: unknown,
   status = 200,
-  extraHeaders: Record<string, string> = {},
+  extra: Record<string, string> = {},
 ): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       "content-type": "application/json;charset=UTF-8",
       "access-control-allow-origin": "*",
-      ...extraHeaders,
+      ...extra,
     },
   });
 }
@@ -93,57 +142,58 @@ function json(
 // /api/search handler
 // ---------------------------------------------------------------------------
 
-async function handleSearch(
-  request: Request,
-  env: Env,
-): Promise<Response> {
+async function handleSearch(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") {
-    return json({ error: "Method not allowed" }, 405);
+    return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
   const url = new URL(request.url);
   const optsOrError = parseSearchOptions(url);
 
   if ("error" in optsOrError) {
-    return json({ error: optsOrError.error }, 400);
+    return jsonResponse({ error: optsOrError.error }, 400);
   }
 
   const opts = optsOrError;
   const results: FlightResult[] = [];
-  const errors: { source: "google" | "kiwi"; message: string }[] = [];
+  const errors: SearchError[] = [];
 
-  // Run Google Flights and Kiwi in parallel; each failure is isolated
-  const [googleOutcome, kiwiOutcome] = await Promise.allSettled([
-    searchGoogleFlights(opts),
-    env.KIWI_API_KEY
-      ? searchKiwi(opts, env.KIWI_API_KEY)
-      : Promise.reject(new Error("KIWI_API_KEY secret not configured")),
+  const skyscannerSearch =
+    env.SKYSCANNER_API_KEY
+      ? fetchSkyscanner(opts, env.SKYSCANNER_API_KEY, env.SEARCH_CACHE)
+      : Promise.reject(
+          new Error("SKYSCANNER_API_KEY secret not configured"),
+        );
+
+  const [googleOutcome, skyscannerOutcome] = await Promise.allSettled([
+    fetchGoogleFlights(opts, env.SEARCH_CACHE),
+    skyscannerSearch,
   ]);
 
-  if (googleOutcome.status === "fulfilled") {
-    results.push(...googleOutcome.value);
-  } else {
-    const msg =
-      googleOutcome.reason instanceof Error
-        ? googleOutcome.reason.message
-        : String(googleOutcome.reason);
-    errors.push({ source: "google", message: msg });
-  }
+  const collectOutcome = (
+    outcome: PromiseSettledResult<FlightResult[]>,
+    source: ResultSource,
+  ) => {
+    if (outcome.status === "fulfilled") {
+      results.push(...outcome.value);
+    } else {
+      const err = outcome.reason;
+      const message =
+        err instanceof SkyscannerQuotaError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      errors.push({ source, message });
+    }
+  };
 
-  if (kiwiOutcome.status === "fulfilled") {
-    results.push(...kiwiOutcome.value);
-  } else {
-    const msg =
-      kiwiOutcome.reason instanceof Error
-        ? kiwiOutcome.reason.message
-        : String(kiwiOutcome.reason);
-    errors.push({ source: "kiwi", message: msg });
-  }
+  collectOutcome(googleOutcome, "google_flights");
+  collectOutcome(skyscannerOutcome, "skyscanner");
 
-  // Sort combined results by price ascending
   results.sort((a, b) => a.price - b.price);
 
-  return json({ results, errors });
+  return jsonResponse({ results, errors });
 }
 
 // ---------------------------------------------------------------------------
@@ -159,14 +209,15 @@ export default {
     }
 
     if (url.pathname === "/health") {
-      return json({ status: "ok", env: env.APP_ENV ?? "unknown" });
+      return jsonResponse({ status: "ok", env: env.APP_ENV ?? "unknown" });
     }
 
-    return json(
+    return jsonResponse(
       {
         error: "Not found",
         availableRoutes: [
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01",
+          "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01&returnDate=2026-09-15&tripType=round_trip",
           "GET /health",
         ],
       },

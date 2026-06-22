@@ -14,7 +14,7 @@
  *  - Flight rows live at inner[2][0] and inner[3][0]
  */
 
-import type { FlightLeg, FlightResult, SearchOptions } from "./types";
+import type { FlightLeg, FlightResult, ResultSource, SearchOptions } from "./types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -275,7 +275,7 @@ function decodeFlightRow(row: unknown[]): FlightResult | null {
       arrivalTime: last?.arrivalTime ?? "",
       legs,
       bookingUrl,
-      source: "google",
+      source: "google_flights" as ResultSource,
     };
   } catch {
     return null;
