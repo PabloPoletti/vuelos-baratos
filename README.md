@@ -340,6 +340,69 @@ node scripts/test-multi-city.js
 BASE_URL=http://localhost:8787 node scripts/test-multi-city.js
 ```
 
+## Frontend (React + Vite — Cloudflare Pages)
+
+El frontend vive en la carpeta `frontend/` del mismo repositorio y se despliega
+en Cloudflare Pages (build automático en cada push a main).
+
+### Stack
+- **React 19 + Vite 6** — SPA con 3 secciones en pestañas
+- **Recharts 3** — gráfico de barras para sección de fechas flexibles
+- CSS propio (sin librería de UI)
+
+### Estructura
+```
+frontend/
+  src/
+    App.tsx                      Tabs + routing interno
+    api.ts                       Todas las llamadas fetch
+    types.ts                     Interfaces TypeScript
+    index.css                    Estilos globales
+    components/
+      AirportInput.tsx           Input con datalist de aeropuertos favoritos
+      SearchSection.tsx          Sección 1 — búsqueda puntual
+      SearchDatesSection.tsx     Sección 2 — fechas flexibles + gráfico
+      MultiCitySection.tsx       Sección 3 — multidestino
+  index.html
+  vite.config.ts
+  package.json
+```
+
+### Correr localmente
+
+```bash
+cd frontend
+cp .env.example .env.local   # o editar manualmente VITE_API_BASE_URL
+npm install
+npm run dev                  # http://localhost:5173
+```
+
+La variable `VITE_API_BASE_URL` apunta al Worker de producción por defecto.
+Para apuntar al Worker local, correr también `npm run dev` en la raíz del repo
+y setear `VITE_API_BASE_URL=http://localhost:8787`.
+
+### Deploy a Cloudflare Pages
+
+**Pasos manuales en el dashboard de Cloudflare (una sola vez):**
+
+1. Ir a **Workers & Pages → Create application → Pages → Connect to Git**
+2. Conectar el repositorio `PabloPoletti/vuelos-baratos` de GitHub
+3. Configurar la build:
+   - **Project name:** `vuelos-baratos` (o el nombre que prefieras)
+   - **Production branch:** `main`
+   - **Root directory:** `frontend`
+   - **Build command:** `npm run build`
+   - **Build output directory:** `dist`
+4. En **Environment variables → Production**, agregar:
+   - `VITE_API_BASE_URL` = `https://vuelos-baratos-api.lic-poletti.workers.dev`
+5. Guardar y hacer el primer deploy.
+
+A partir de ahí, cada push a `main` trigerea un nuevo build automáticamente.
+
+> ⚠️ `VITE_API_BASE_URL` debe configurarse en el dashboard de Pages, **no** en
+> `wrangler.toml` (ese archivo solo aplica al Worker). Variables que empiezan
+> con `VITE_` son embebidas en el bundle de Vite en build-time.
+
 ## Etapas futuras
 
 - Optimizador de rutas multidestino
