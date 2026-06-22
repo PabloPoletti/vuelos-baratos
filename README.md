@@ -15,6 +15,9 @@ Cloudflare Workers + KV.
 - Fusiona y ordena los resultados por precio en un único endpoint JSON.
 - Si una fuente falla (cuota agotada, error de red, etc.), la otra sigue
   respondiendo. Los errores se reportan en `errors[]`, no rompen el endpoint.
+- Escanea un rango de fechas con `/api/search-dates`: devuelve el precio
+  mínimo por fecha de salida y detecta automáticamente las ofertas
+  (precio ≤ mediana − 1.5 × desviación estándar).
 
 > **¿Por qué no Kiwi Tequila?**  
 > La API Tequila de Kiwi.com cerró el registro público a nuevos desarrolladores
@@ -25,12 +28,15 @@ Cloudflare Workers + KV.
 
 ```
 src/
-  index.ts                  Worker entry point + router + /api/search handler
+  index.ts                  Worker entry point + router
   search/
     types.ts                Tipos TypeScript compartidos
     google-flights.ts       Cliente Google Flights (protocolo batchexecute)
     skyscanner.ts           Cliente Skyscanner (Sky Scrapper / RapidAPI)
     cache.ts                Helpers de caché KV (TTLs, keys, read/write)
+    search-dates.ts         Motor de búsqueda por rango de fechas + detector de ofertas
+scripts/
+  test-search-dates.js      Script de prueba manual para /api/search-dates
 wrangler.toml
 ```
 
@@ -151,6 +157,70 @@ Si la cuota de Skyscanner se agota (HTTP 429):
 }
 ```
 
+## Endpoint /api/search-dates
+
+Busca el precio mínimo disponible para cada fecha de salida dentro de un rango,
+usando **solo Google Flights** (Skyscanner se reserva para `/api/search`).
+Comparte la misma caché KV, por lo que fechas ya consultadas desde `/api/search`
+se sirven sin costo adicional.
+
+### Parámetros
+
+| Parámetro | Req. | Descripción |
+|---|---|---|
+| `origin` | sí | IATA origen (e.g. `MDZ`) |
+| `destination` | sí | IATA destino (e.g. `MIA`) |
+| `startDate` | sí | Primera fecha de salida `YYYY-MM-DD` |
+| `endDate` | sí | Última fecha de salida `YYYY-MM-DD` |
+| `stayDuration` | sí | Días de estadía (1–90). returnDate = departureDate + stayDuration |
+| `adults` | no | Adultos 1–9 (default: 1) |
+| `currency` | no | ISO 4217 (default: `USD`) |
+
+Límites de seguridad:
+- Máximo **35 fechas de salida** por llamada (si el rango es mayor, devuelve 400)
+- Máximo **3 búsquedas simultáneas** a Google Flights
+
+### Ejemplo
+
+```
+GET /api/search-dates?origin=MDZ&destination=MIA&startDate=2026-08-01&endDate=2026-08-21&stayDuration=14
+```
+
+### Respuesta
+
+```jsonc
+{
+  "origin": "MDZ",
+  "destination": "MIA",
+  "stayDuration": 14,
+  "results": [
+    { "departureDate": "2026-08-03", "returnDate": "2026-08-17", "price": 820, "currency": "USD", "isDeal": true },
+    { "departureDate": "2026-08-01", "returnDate": "2026-08-15", "price": 980, "currency": "USD", "isDeal": false },
+    ...
+  ],
+  "stats": {
+    "median": 1050,
+    "mean":   1080.50,
+    "stdDev": 120.30,
+    "min":    820,
+    "max":    1380
+  },
+  "errors": []
+}
+```
+
+**Detector de ofertas:** `isDeal: true` cuando `price ≤ median − 1.5 × stdDev`.
+Requiere al menos 5 resultados válidos; si hay menos, `isDeal` es `false` para
+todos y se incluye `isDealNote` explicando por qué.
+
+### Test manual
+
+```bash
+node scripts/test-search-dates.js
+# contra local:
+BASE_URL=http://localhost:8787 node scripts/test-search-dates.js
+```
+
 ## Caché KV
 
 | Fuente | TTL | Clave de caché |
@@ -169,7 +239,5 @@ Si la cuota de Skyscanner se agota (HTTP 429):
 
 ## Etapas futuras
 
-- Fechas flexibles / grilla de precios
 - Optimizador de rutas multidestino
 - Frontend visual
-- Detector de anomalías de precio

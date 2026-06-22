@@ -22,6 +22,10 @@ import {
   flightCacheKey,
   getCachedFlights,
 } from "./search/cache";
+import {
+  MAX_DATE_SEARCHES,
+  searchByDateRange,
+} from "./search/search-dates";
 import type {
   FlightResult,
   ResultSource,
@@ -43,7 +47,7 @@ export interface Env {
 }
 
 // ---------------------------------------------------------------------------
-// Validation
+// Validation helpers (shared across handlers)
 // ---------------------------------------------------------------------------
 
 const IATA_RE = /^[A-Z]{3}$/;
@@ -197,6 +201,65 @@ async function handleSearch(request: Request, env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// /api/search-dates handler
+// ---------------------------------------------------------------------------
+
+async function handleSearchDates(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  const url = new URL(request.url);
+  const get = (k: string) => url.searchParams.get(k)?.trim() ?? "";
+
+  const origin = get("origin").toUpperCase();
+  const destination = get("destination").toUpperCase();
+  const startDate = get("startDate");
+  const endDate = get("endDate");
+  const rawStay = get("stayDuration");
+  const adults = parseInt(get("adults") || "1", 10);
+  const currency = (get("currency") || "USD").toUpperCase();
+
+  if (!IATA_RE.test(origin))
+    return jsonResponse(
+      { error: "origin must be a 3-letter IATA airport code (e.g. MDZ)" },
+      400,
+    );
+  if (!IATA_RE.test(destination))
+    return jsonResponse(
+      { error: "destination must be a 3-letter IATA airport code (e.g. MIA)" },
+      400,
+    );
+  if (!DATE_RE.test(startDate))
+    return jsonResponse({ error: "startDate must be YYYY-MM-DD" }, 400);
+  if (!DATE_RE.test(endDate))
+    return jsonResponse({ error: "endDate must be YYYY-MM-DD" }, 400);
+
+  const stayDuration = parseInt(rawStay, 10);
+  if (isNaN(stayDuration) || stayDuration < 1 || stayDuration > 90)
+    return jsonResponse(
+      { error: "stayDuration must be a whole number between 1 and 90" },
+      400,
+    );
+  if (isNaN(adults) || adults < 1 || adults > 9)
+    return jsonResponse({ error: "adults must be between 1 and 9" }, 400);
+
+  const outcome = await searchByDateRange(
+    { origin, destination, startDate, endDate, stayDuration, adults, currency },
+    env.SEARCH_CACHE,
+  );
+
+  if ("error" in outcome) {
+    return jsonResponse({ error: outcome.error }, outcome.status);
+  }
+
+  return jsonResponse(outcome);
+}
+
+// ---------------------------------------------------------------------------
 // Worker entry point
 // ---------------------------------------------------------------------------
 
@@ -206,6 +269,10 @@ export default {
 
     if (url.pathname === "/api/search") {
       return handleSearch(request, env);
+    }
+
+    if (url.pathname === "/api/search-dates") {
+      return handleSearchDates(request, env);
     }
 
     if (url.pathname === "/health") {
@@ -218,6 +285,7 @@ export default {
         availableRoutes: [
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01",
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01&returnDate=2026-09-15&tripType=round_trip",
+          `GET /api/search-dates?origin=MDZ&destination=MIA&startDate=2026-08-01&endDate=2026-08-21&stayDuration=14 (max ${MAX_DATE_SEARCHES} dates)`,
           "GET /health",
         ],
       },
