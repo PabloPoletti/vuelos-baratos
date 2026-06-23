@@ -29,7 +29,7 @@
  *   Users needing 4+ destinations should reduce nightsPerStop or use fixed mode.
  */
 
-import { searchGoogleFlights } from "./google-flights";
+import { searchGoogleFlights, filterByDuration } from "./google-flights";
 import { TTL, cacheFlights, flightCacheKey, getCachedFlights } from "./cache";
 import type { FlightResult, SearchOptions } from "./types";
 
@@ -216,6 +216,7 @@ async function searchLegPrice(
     try {
       flights = await searchGoogleFlights(searchOpts);
       if (flights.length > 0) {
+        // Cache raw results; filter is applied below when computing the price.
         await cacheFlights(kv, kvKey, flights, TTL.GOOGLE_FLIGHTS);
       }
     } catch {
@@ -223,8 +224,15 @@ async function searchLegPrice(
     }
   }
 
+  // Apply duration filter per-leg so implausibly long connecting options
+  // don't inflate the cheapest price for this specific segment.
+  const { results: filtered } = filterByDuration(flights);
+  const effectiveFlights = filtered.length > 0 ? filtered : flights;
+
   const price =
-    flights.length > 0 ? Math.min(...flights.map((f) => f.price)) : null;
+    effectiveFlights.length > 0
+      ? Math.min(...effectiveFlights.map((f) => f.price))
+      : null;
   memo.set(memoKey, price);
   return price;
 }

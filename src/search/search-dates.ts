@@ -19,7 +19,7 @@
  *    and a note is included in the response.
  */
 
-import { searchGoogleFlights } from "./google-flights";
+import { searchGoogleFlights, filterByDuration } from "./google-flights";
 import { TTL, cacheFlights, flightCacheKey, getCachedFlights } from "./cache";
 import type { FlightResult, SearchOptions } from "./types";
 
@@ -181,13 +181,19 @@ async function cheapestPriceForDate(
   if (!flights) {
     flights = await searchGoogleFlights(searchOpts);
     if (flights.length > 0) {
+      // Cache the raw unfiltered set so threshold changes don't bust the cache.
       await cacheFlights(kv, cacheKey, flights, TTL.GOOGLE_FLIGHTS);
     }
   }
 
   if (flights.length === 0) return null;
 
-  return Math.min(...flights.map((f) => f.price));
+  // Apply duration filter before picking the cheapest price so absurdly long
+  // itineraries don't distort the deal-detection statistics.
+  const { results: filtered } = filterByDuration(flights);
+  const effectiveFlights = filtered.length > 0 ? filtered : flights;
+
+  return Math.min(...effectiveFlights.map((f) => f.price));
 }
 
 // ---------------------------------------------------------------------------

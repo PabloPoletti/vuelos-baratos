@@ -14,7 +14,10 @@
  *   - Skyscanner:     24 hours TTL  (conserve the 100 req/month free quota)
  */
 
-import { searchGoogleFlights } from "./search/google-flights";
+import {
+  searchGoogleFlights,
+  filterByDuration,
+} from "./search/google-flights";
 import { SkyscannerQuotaError, searchSkyscanner } from "./search/skyscanner";
 import {
   TTL,
@@ -110,14 +113,18 @@ function parseSearchOptions(url: URL): SearchOptions | { error: string } {
 async function fetchGoogleFlights(
   opts: SearchOptions,
   kv: KVNamespace,
-): Promise<FlightResult[]> {
+): Promise<{ results: FlightResult[]; filteredCount: number; unfiltered?: true }> {
   const key = flightCacheKey("gf", opts);
-  const cached = await getCachedFlights(kv, key);
-  if (cached) return cached;
 
-  const results = await searchGoogleFlights(opts);
-  await cacheFlights(kv, key, results, TTL.GOOGLE_FLIGHTS);
-  return results;
+  // Always cache/restore the RAW results so threshold changes don't require
+  // cache busting. Apply the duration filter after reading from cache.
+  let raw = await getCachedFlights(kv, key);
+  if (!raw) {
+    raw = await searchGoogleFlights(opts);
+    await cacheFlights(kv, key, raw, TTL.GOOGLE_FLIGHTS);
+  }
+
+  return filterByDuration(raw);
 }
 
 async function fetchSkyscanner(
@@ -172,6 +179,8 @@ async function handleSearch(request: Request, env: Env): Promise<Response> {
   const opts = optsOrError;
   const results: FlightResult[] = [];
   const errors: SearchError[] = [];
+  let filteredCount = 0;
+  let unfiltered: true | undefined;
 
   const skyscannerSearch =
     env.SKYSCANNER_API_KEY
@@ -185,30 +194,41 @@ async function handleSearch(request: Request, env: Env): Promise<Response> {
     skyscannerSearch,
   ]);
 
-  const collectOutcome = (
-    outcome: PromiseSettledResult<FlightResult[]>,
-    source: ResultSource,
-  ) => {
-    if (outcome.status === "fulfilled") {
-      results.push(...outcome.value);
-    } else {
-      const err = outcome.reason;
-      const message =
+  if (googleOutcome.status === "fulfilled") {
+    results.push(...googleOutcome.value.results);
+    filteredCount += googleOutcome.value.filteredCount;
+    if (googleOutcome.value.unfiltered) unfiltered = true;
+  } else {
+    const err = googleOutcome.reason;
+    errors.push({
+      source: "google_flights",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  if (skyscannerOutcome.status === "fulfilled") {
+    results.push(...skyscannerOutcome.value);
+  } else {
+    const err = skyscannerOutcome.reason;
+    errors.push({
+      source: "skyscanner",
+      message:
         err instanceof SkyscannerQuotaError
           ? err.message
           : err instanceof Error
             ? err.message
-            : String(err);
-      errors.push({ source, message });
-    }
-  };
-
-  collectOutcome(googleOutcome, "google_flights");
-  collectOutcome(skyscannerOutcome, "skyscanner");
+            : String(err),
+    });
+  }
 
   results.sort((a, b) => a.price - b.price);
 
-  return jsonResponse({ results, errors });
+  return jsonResponse({
+    results,
+    errors,
+    filteredCount,
+    ...(unfiltered ? { unfiltered: true } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

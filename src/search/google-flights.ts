@@ -337,6 +337,50 @@ async function postWithRetry(url: string, body: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Duration filter — applied AFTER caching, before serving results
+// ---------------------------------------------------------------------------
+
+export interface DurationFilterResult {
+  results: FlightResult[];
+  filteredCount: number;
+  /** true when the filter would have eliminated every result — raw set is
+   *  returned untouched so the caller always gets something useful. */
+  unfiltered?: true;
+}
+
+/**
+ * Discards itineraries that are implausibly long compared to the fastest
+ * option in the same result set.
+ *
+ * Threshold = max(minDuration × 2.5, minDuration + 180 minutes)
+ *
+ * The +180-minute floor prevents over-aggressive filtering on very short
+ * direct routes: a 1h40 direct would otherwise cut off everything above
+ * ~4h10, which may be the only connecting options available.
+ *
+ * Always call this AFTER caching raw results in KV so the cache stores the
+ * full unfiltered set and threshold adjustments don't require cache busting.
+ */
+export function filterByDuration(
+  results: FlightResult[],
+): DurationFilterResult {
+  if (results.length === 0) return { results, filteredCount: 0 };
+
+  const minDuration = Math.min(...results.map((r) => r.totalDurationMinutes));
+  const threshold = Math.max(minDuration * 2.5, minDuration + 180);
+
+  const filtered = results.filter((r) => r.totalDurationMinutes <= threshold);
+
+  if (filtered.length === 0) {
+    // Extremely rare — all results are at the same duration edge. Return raw.
+    return { results, filteredCount: 0, unfiltered: true };
+  }
+
+  return { results: filtered, filteredCount: results.length - filtered.length };
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
