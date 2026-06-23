@@ -74,6 +74,10 @@ export interface LegResult {
   date: string;
   price: number | null;
   currency: string;
+  /** Airlines on the cheapest option for this leg (empty when no result). */
+  airlines: string[];
+  /** Stops on the cheapest option; null when no result. */
+  stops: number | null;
   error: string | null;
 }
 
@@ -176,23 +180,77 @@ function legMemoKey(from: string, to: string, date: string): string {
   return `${from}:${to}:${date}`;
 }
 
+/** Cached cheapest option for a one-way leg search. */
+interface LegMemoEntry {
+  price: number;
+  airlines: string[];
+  stops: number;
+}
+
+function cheapestFromFlights(flights: FlightResult[]): LegMemoEntry | null {
+  const { results: filtered } = filterByDuration(flights);
+  const effective = filtered.length > 0 ? filtered : flights;
+  if (effective.length === 0) return null;
+
+  const cheapest = effective.reduce((best, f) => (f.price < best.price ? f : best));
+  return {
+    price: cheapest.price,
+    airlines: cheapest.airlines,
+    stops: cheapest.stops,
+  };
+}
+
+function legResultFromSpec(
+  spec: { from: string; to: string; date: string },
+  entry: LegMemoEntry | null | undefined,
+  currency: string,
+  errorOverride?: string,
+): LegResult {
+  if (errorOverride) {
+    return {
+      ...spec,
+      price: null,
+      currency,
+      airlines: [],
+      stops: null,
+      error: errorOverride,
+    };
+  }
+  if (!entry) {
+    return {
+      ...spec,
+      price: null,
+      currency,
+      airlines: [],
+      stops: null,
+      error: "No flights found for this leg",
+    };
+  }
+  return {
+    ...spec,
+    price: entry.price,
+    currency,
+    airlines: entry.airlines,
+    stops: entry.stops,
+    error: null,
+  };
+}
+
 /**
- * Returns the cheapest price for a one-way leg.
+ * Returns the cheapest one-way option for a leg (price + airlines + stops).
  * Checks memo first, then KV, then calls Google Flights.
- * Always writes the result back to both memo and KV.
  */
-async function searchLegPrice(
+async function searchLeg(
   from: string,
   to: string,
   date: string,
   adults: number,
   currency: string,
   kv: KVNamespace,
-  memo: Map<string, number | null>,
-): Promise<number | null> {
+  memo: Map<string, LegMemoEntry | null>,
+): Promise<LegMemoEntry | null> {
   const memoKey = legMemoKey(from, to, date);
 
-  // 1. In-request memo
   if (memo.has(memoKey)) {
     return memo.get(memoKey) ?? null;
   }
@@ -207,34 +265,22 @@ async function searchLegPrice(
   };
   const kvKey = flightCacheKey("gf", searchOpts);
 
-  // 2. KV cache
   let flights: FlightResult[] | null = await getCachedFlights(kv, kvKey);
 
-  // 3. Google Flights — wrap in try/catch so the memo is always populated
-  // even when Google returns an unexpected response for this specific route.
   if (!flights) {
     try {
       flights = await searchGoogleFlights(searchOpts);
       if (flights.length > 0) {
-        // Cache raw results; filter is applied below when computing the price.
         await cacheFlights(kv, kvKey, flights, TTL.GOOGLE_FLIGHTS);
       }
     } catch {
-      flights = []; // treat error as no-flights; memo will record null
+      flights = [];
     }
   }
 
-  // Apply duration filter per-leg so implausibly long connecting options
-  // don't inflate the cheapest price for this specific segment.
-  const { results: filtered } = filterByDuration(flights);
-  const effectiveFlights = filtered.length > 0 ? filtered : flights;
-
-  const price =
-    effectiveFlights.length > 0
-      ? Math.min(...effectiveFlights.map((f) => f.price))
-      : null;
-  memo.set(memoKey, price);
-  return price;
+  const entry = cheapestFromFlights(flights);
+  memo.set(memoKey, entry);
+  return entry;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,31 +307,28 @@ export async function runFixedMode(
   }
   legSpecs.push({ from: prev, to: opts.origin, date: opts.returnDate });
 
-  const memo = new Map<string, number | null>();
+  const memo = new Map<string, LegMemoEntry | null>();
   const tasks = legSpecs.map(
     ({ from, to, date }) =>
       () =>
-        searchLegPrice(from, to, date, adults, currency, kv, memo),
+        searchLeg(from, to, date, adults, currency, kv, memo),
   );
 
   const settled = await runWithConcurrency(tasks, CONCURRENCY);
 
   const legs: LegResult[] = legSpecs.map((spec, i) => {
     const outcome = settled[i];
-    if (!outcome) return { ...spec, price: null, currency, error: "No result" };
+    if (!outcome) {
+      return legResultFromSpec(spec, null, currency, "No result");
+    }
     if (outcome.status === "rejected") {
       const msg =
         outcome.reason instanceof Error
           ? outcome.reason.message
           : String(outcome.reason);
-      return { ...spec, price: null, currency, error: msg };
+      return legResultFromSpec(spec, null, currency, msg);
     }
-    return {
-      ...spec,
-      price: outcome.value,
-      currency,
-      error: outcome.value === null ? "No flights found for this leg" : null,
-    };
+    return legResultFromSpec(spec, outcome.value, currency);
   });
 
   const allPrices = legs.map((l) => l.price);
@@ -370,7 +413,7 @@ export async function runOptimizeMode(
   }
 
   // Pre-check KV for all unique legs to count cache hits
-  const memo = new Map<string, number | null>();
+  const memo = new Map<string, LegMemoEntry | null>();
   let kvCacheHits = 0;
 
   for (const key of uniqueKeys) {
@@ -388,9 +431,7 @@ export async function runOptimizeMode(
     });
     const cached = await getCachedFlights(kv, kvKey);
     if (cached !== null) {
-      const price =
-        cached.length > 0 ? Math.min(...cached.map((f) => f.price)) : null;
-      memo.set(key, price);
+      memo.set(key, cheapestFromFlights(cached));
       kvCacheHits++;
     }
   }
@@ -403,7 +444,7 @@ export async function runOptimizeMode(
       const from = parts[0] ?? "";
       const to = parts[1] ?? "";
       const date = parts[2] ?? "";
-      return searchLegPrice(from, to, date, adults, currency, kv, memo);
+      return searchLeg(from, to, date, adults, currency, kv, memo);
     },
   );
 
@@ -415,13 +456,8 @@ export async function runOptimizeMode(
   for (const spec of permSpecs) {
     const legs: LegResult[] = spec.legs.map((leg) => {
       const key = legMemoKey(leg.from, leg.to, leg.date);
-      const price = memo.get(key) ?? null;
-      return {
-        ...leg,
-        price,
-        currency,
-        error: price === null ? "No flights found for this leg" : null,
-      };
+      const entry = memo.get(key);
+      return legResultFromSpec(leg, entry, currency);
     });
 
     if (legs.some((l) => l.price === null)) continue; // incomplete route
@@ -437,8 +473,8 @@ export async function runOptimizeMode(
 
   // Collect legs that returned no flights — useful for diagnosing "best: null"
   const failedLegs: string[] = [];
-  for (const [key, price] of memo) {
-    if (price === null) {
+  for (const [key, entry] of memo) {
+    if (entry === null) {
       const parts = key.split(":");
       failedLegs.push(`${parts[0] ?? "?"}→${parts[1] ?? "?"} [${parts[2] ?? "?"}]`);
     }

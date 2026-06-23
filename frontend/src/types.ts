@@ -70,6 +70,8 @@ export interface LegResult {
   date: string;
   price: number | null;
   currency: string;
+  airlines: string[];
+  stops: number | null;
   error: string | null;
 }
 

@@ -13,6 +13,12 @@ import type {
 // Sub-components
 // ---------------------------------------------------------------------------
 
+function formatStops(stops: number | null): string {
+  if (stops === null) return "—";
+  if (stops === 0) return "Directo";
+  return `${stops} escala${stops > 1 ? "s" : ""}`;
+}
+
 function LegTable({ legs }: { legs: LegResult[] }) {
   return (
     <table className="legs-table">
@@ -21,6 +27,8 @@ function LegTable({ legs }: { legs: LegResult[] }) {
           <th>Desde</th>
           <th>Hacia</th>
           <th>Fecha</th>
+          <th>Aerolíneas</th>
+          <th>Escalas</th>
           <th>Precio</th>
         </tr>
       </thead>
@@ -30,6 +38,8 @@ function LegTable({ legs }: { legs: LegResult[] }) {
             <td>{l.from}</td>
             <td>{l.to}</td>
             <td style={{ whiteSpace: "nowrap" }}>{l.date}</td>
+            <td>{l.airlines?.length ? l.airlines.join(", ") : "—"}</td>
+            <td>{formatStops(l.stops)}</td>
             <td className="td-price">
               {l.price !== null ? (
                 <>
