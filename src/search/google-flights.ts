@@ -261,10 +261,6 @@ function decodeFlightRow(row: unknown[]): FlightResult | null {
     const first = legs[0];
     const last = legs[legs.length - 1];
 
-    // Build a generic Google Flights deep-link for the itinerary
-    const bookingUrl =
-      `https://www.google.com/travel/flights?q=Flights+to+${last?.arrivalAirport ?? ""}+from+${first?.departureAirport ?? ""}+on+${first?.departureTime?.slice(0, 10) ?? ""}`;
-
     return {
       price,
       currency: "USD", // currency token (priceBlock[1]) is a base64 protobuf; USD default
@@ -274,7 +270,8 @@ function decodeFlightRow(row: unknown[]): FlightResult | null {
       departureTime: first?.departureTime ?? "",
       arrivalTime: last?.arrivalTime ?? "",
       legs,
-      bookingUrl,
+      // Overwritten in searchGoogleFlights with buildGoogleFlightsBookingUrl()
+      bookingUrl: "",
       source: "google_flights" as ResultSource,
     };
   } catch {
@@ -381,6 +378,37 @@ export function filterByDuration(
 }
 
 // ---------------------------------------------------------------------------
+// Booking URL builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a Google Flights deep-link for the search criteria.
+ *
+ * Round-trip format (confirmed via live Google Flights URLs):
+ *   Flights to {dest} from {origin} on {departureDate} through {returnDate}
+ *
+ * One-way keeps the per-itinerary leg-based link (origin/dest/date from legs).
+ */
+export function buildGoogleFlightsBookingUrl(
+  opts: SearchOptions,
+  legs?: { first?: FlightLeg; last?: FlightLeg },
+): string {
+  if (opts.tripType === "round_trip" && opts.returnDate) {
+    return (
+      `https://www.google.com/travel/flights?q=` +
+      `Flights+to+${opts.destination}+from+${opts.origin}+on+${opts.date}+through+${opts.returnDate}`
+    );
+  }
+
+  const first = legs?.first;
+  const last = legs?.last;
+  const dest = last?.arrivalAirport ?? opts.destination;
+  const orig = first?.departureAirport ?? opts.origin;
+  const date = first?.departureTime?.slice(0, 10) ?? opts.date;
+  return `https://www.google.com/travel/flights?q=Flights+to+${dest}+from+${orig}+on+${date}`;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -398,6 +426,12 @@ export async function searchGoogleFlights(
   const inner = extractInnerPayload(rawText);
   const results = extractFlights(inner);
 
-  // Stamp currency on results if we have it from the request
-  return results.map((r) => ({ ...r, currency }));
+  return results.map((r) => ({
+    ...r,
+    currency,
+    bookingUrl: buildGoogleFlightsBookingUrl(opts, {
+      first: r.legs[0],
+      last: r.legs[r.legs.length - 1],
+    }),
+  }));
 }

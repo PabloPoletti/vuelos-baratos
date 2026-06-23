@@ -17,6 +17,7 @@
 import {
   searchGoogleFlights,
   filterByDuration,
+  buildGoogleFlightsBookingUrl,
 } from "./search/google-flights";
 import { SkyscannerQuotaError, searchSkyscanner } from "./search/skyscanner";
 import {
@@ -124,7 +125,17 @@ async function fetchGoogleFlights(
     await cacheFlights(kv, key, raw, TTL.GOOGLE_FLIGHTS);
   }
 
-  return filterByDuration(raw);
+  // Rebuild booking URLs from search opts on every serve — cached entries may
+  // predate URL-format fixes, and round_trip links need returnDate from opts.
+  const stamped = raw.map((r) => ({
+    ...r,
+    bookingUrl: buildGoogleFlightsBookingUrl(opts, {
+      first: r.legs[0],
+      last: r.legs[r.legs.length - 1],
+    }),
+  }));
+
+  return filterByDuration(stamped);
 }
 
 async function fetchSkyscanner(
