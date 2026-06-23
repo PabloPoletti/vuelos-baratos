@@ -5,3 +5,4 @@ dist/
 *.env
 .env.*
 *.log
+scripts/airports-raw.json

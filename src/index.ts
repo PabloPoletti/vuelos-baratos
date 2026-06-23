@@ -36,6 +36,7 @@ import {
   runFixedMode,
   runOptimizeMode,
 } from "./search/multi-city";
+import { searchAirports } from "./search/airports";
 import type {
   FixedModeOptions,
   FixedStop,
@@ -427,6 +428,26 @@ async function handleMultiCity(
 }
 
 // ---------------------------------------------------------------------------
+// /api/airports handler  (GET)
+// ---------------------------------------------------------------------------
+
+function handleAirports(request: Request): Response {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  const url = new URL(request.url);
+  const query = url.searchParams.get("query")?.trim() ?? "";
+
+  if (query.length < 1) {
+    return jsonResponse({ results: [] });
+  }
+
+  const results = searchAirports(query, 10);
+  return jsonResponse({ results });
+}
+
+// ---------------------------------------------------------------------------
 // Worker entry point
 // ---------------------------------------------------------------------------
 
@@ -459,6 +480,10 @@ export default {
       return handleMultiCity(request, env);
     }
 
+    if (url.pathname === "/api/airports") {
+      return handleAirports(request);
+    }
+
     if (url.pathname === "/health") {
       return jsonResponse({ status: "ok", env: env.APP_ENV ?? "unknown" });
     }
@@ -471,6 +496,7 @@ export default {
           "GET /api/search?origin=EZE&destination=MAD&date=2026-09-01&returnDate=2026-09-15&tripType=round_trip",
           `GET /api/search-dates?origin=MDZ&destination=MIA&startDate=2026-08-01&endDate=2026-08-21&stayDuration=14 (max ${MAX_DATE_SEARCHES} dates)`,
           `POST /api/multi-city  body: { mode:"fixed"|"optimize", ... } (max ${MAX_DESTINATIONS} destinations)`,
+          "GET /api/airports?query=cancun",
           "GET /health",
         ],
       },

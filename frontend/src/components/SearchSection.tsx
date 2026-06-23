@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AirportInput } from "./AirportInput";
+import { AirportSearchInput } from "./AirportSearchInput";
 import { apiSearch } from "../api";
 import type { FlightResult, SearchError } from "../types";
 
@@ -94,8 +94,8 @@ export function SearchSection() {
       {/* Search form */}
       <div className="card">
         <div className="form-grid">
-          <AirportInput label="Origen" value={origin} onChange={setOrigin} id="orig" />
-          <AirportInput
+          <AirportSearchInput label="Origen" value={origin} onChange={setOrigin} id="orig" />
+          <AirportSearchInput
             label="Destino"
             value={destination}
             onChange={setDestination}

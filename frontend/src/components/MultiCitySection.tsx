@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AirportInput } from "./AirportInput";
+import { AirportSearchInput } from "./AirportSearchInput";
 import { apiMultiCity } from "../api";
 import type {
   MultiCityResult,
@@ -27,7 +27,7 @@ function LegTable({ legs }: { legs: LegResult[] }) {
           <th>Desde</th>
           <th>Hacia</th>
           <th>Fecha</th>
-          <th>Aerolíneas</th>
+          <th>Aerolínea</th>
           <th>Escalas</th>
           <th>Precio</th>
         </tr>
@@ -144,11 +144,11 @@ export function MultiCitySection() {
   }
 
   // ---- Optimize dest helpers ----
-  function addDest() {
-    const code = optDestInput.trim().toUpperCase();
-    if (code.length !== 3 || optDests.includes(code) || optDests.length >= 6)
+  function addDestCode(code: string) {
+    const iata = code.trim().toUpperCase();
+    if (iata.length !== 3 || optDests.includes(iata) || optDests.length >= 6)
       return;
-    setOptDests((d) => [...d, code]);
+    setOptDests((d) => [...d, iata]);
     setOptDestInput("");
   }
 
@@ -239,7 +239,7 @@ export function MultiCitySection() {
       {mode === "fixed" && (
         <div className="card">
           <div style={{ marginBottom: "1rem" }}>
-            <AirportInput
+            <AirportSearchInput
               label="Origen / punto de partida"
               value={fixedOrigin}
               onChange={setFixedOrigin}
@@ -251,14 +251,12 @@ export function MultiCitySection() {
 
           {fixedStops.map((stop, i) => (
             <div className="stop-row" key={i}>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Destino {i + 1}</label>
-                <input
-                  type="text"
+              <div style={{ flex: 1 }}>
+                <AirportSearchInput
+                  label={`Destino ${i + 1}`}
                   value={stop.destination}
-                  onChange={(e) => updateStop(i, "destination", e.target.value)}
-                  placeholder="Ej: MIA"
-                  maxLength={3}
+                  onChange={(iata) => updateStop(i, "destination", iata)}
+                  id={`fx-stop-${i}`}
                 />
               </div>
               <div className="form-group" style={{ flex: 1 }}>
@@ -312,7 +310,7 @@ export function MultiCitySection() {
       {mode === "optimize" && (
         <div className="card">
           <div className="form-grid">
-            <AirportInput
+            <AirportSearchInput
               label="Origen / base"
               value={optOrigin}
               onChange={setOptOrigin}
@@ -348,7 +346,7 @@ export function MultiCitySection() {
 
           <div className="form-group" style={{ marginBottom: "0.75rem" }}>
             <label className="form-label">
-              Destinos — máx. 6 · usar códigos IATA (JFK, GRU, MAD, no NYC)
+              Destinos — máx. 6 · buscá por ciudad o aeropuerto
             </label>
             <div className="dests-chips">
               {optDests.map((d) => (
@@ -369,30 +367,21 @@ export function MultiCitySection() {
                 </span>
               )}
             </div>
-            <div className="dest-add-row">
-              <input
-                type="text"
-                value={optDestInput}
-                onChange={(e) => setOptDestInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === "Enter" && addDest()}
-                placeholder="Código IATA (Ej: MIA)"
-                maxLength={3}
-                style={{ maxWidth: "180px" }}
-              />
-              <button
-                className="btn"
-                style={{ background: "var(--primary-light)", color: "var(--primary-dark)" }}
-                onClick={addDest}
-                disabled={optDests.length >= 6}
-              >
-                Agregar
-              </button>
-              {optDests.length >= 6 && (
-                <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                  Máximo 6 destinos
-                </span>
-              )}
-            </div>
+            <AirportSearchInput
+              label="Agregar destino"
+              value={optDestInput}
+              onChange={setOptDestInput}
+              onSelect={(iata) => addDestCode(iata)}
+              clearOnSelect
+              placeholder="Ej: Cancún, Miami…"
+              id="opt-dest-add"
+              disabled={optDests.length >= 6}
+            />
+            {optDests.length >= 6 && (
+              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                Máximo 6 destinos
+              </span>
+            )}
           </div>
 
           <button

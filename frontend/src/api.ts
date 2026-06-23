@@ -89,3 +89,21 @@ export async function apiMultiCity(body: unknown): Promise<MultiCityResult> {
   });
   return handleResponse<MultiCityResult>(res);
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/airports
+// ---------------------------------------------------------------------------
+
+export interface AirportSuggestion {
+  iata: string;
+  name: string;
+  city: string;
+  country: string;
+}
+
+export async function apiAirports(query: string): Promise<AirportSuggestion[]> {
+  const q = new URLSearchParams({ query });
+  const res = await fetch(`${BASE}/api/airports?${q}`);
+  const data = await handleResponse<{ results: AirportSuggestion[] }>(res);
+  return data.results ?? [];
+}

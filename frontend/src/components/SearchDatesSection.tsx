@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-import { AirportInput } from "./AirportInput";
+import { AirportSearchInput } from "./AirportSearchInput";
 import { apiSearchDates } from "../api";
 import type { DateRangeResponse, DateResult } from "../types";
 
@@ -110,8 +110,8 @@ export function SearchDatesSection() {
     <div>
       <div className="card">
         <div className="form-grid">
-          <AirportInput label="Origen" value={origin} onChange={setOrigin} id="sd-orig" />
-          <AirportInput
+          <AirportSearchInput label="Origen" value={origin} onChange={setOrigin} id="sd-orig" />
+          <AirportSearchInput
             label="Destino"
             value={destination}
             onChange={setDestination}
