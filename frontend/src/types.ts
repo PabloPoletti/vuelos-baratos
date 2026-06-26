@@ -67,6 +67,7 @@ export interface DateRangeResponse {
 export interface LegStopDetail {
   iata: string;
   city: string;
+  country: string;
 }
 
 export interface LegResult {

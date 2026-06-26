@@ -37,6 +37,7 @@ import {
   runOptimizeMode,
 } from "./search/multi-city";
 import { searchAirports } from "./search/airports";
+import { airlineDisplayNames } from "./search/airline-names";
 import type {
   FixedModeOptions,
   FixedStop,
@@ -130,6 +131,7 @@ async function fetchGoogleFlights(
   // predate URL-format fixes, and round_trip links need returnDate from opts.
   const stamped = raw.map((r) => ({
     ...r,
+    airlines: airlineDisplayNames(r.legs.map((l) => l.airline)),
     bookingUrl: buildGoogleFlightsBookingUrl(opts, {
       first: r.legs[0],
       last: r.legs[r.legs.length - 1],

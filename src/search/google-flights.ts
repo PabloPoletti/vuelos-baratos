@@ -15,6 +15,7 @@
  */
 
 import type { FlightLeg, FlightResult, ResultSource, SearchOptions } from "./types";
+import { airlineDisplayName, airlineDisplayNames } from "./airline-names";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -256,7 +257,9 @@ function decodeFlightRow(row: unknown[]): FlightResult | null {
 
     const totalDuration = typeof detail[9] === "number" ? (detail[9] as number) : 0;
     const stops = legs.length - 1;
-    const airlines = [...new Set(legs.map((l) => l.airline).filter(Boolean))];
+    const airlines = [
+      ...new Set(legs.map((l) => airlineDisplayName(l.airline)).filter(Boolean)),
+    ];
 
     const first = legs[0];
     const last = legs[legs.length - 1];
@@ -429,6 +432,7 @@ export async function searchGoogleFlights(
   return results.map((r) => ({
     ...r,
     currency,
+    airlines: airlineDisplayNames(r.legs.map((l) => l.airline)),
     bookingUrl: buildGoogleFlightsBookingUrl(opts, {
       first: r.legs[0],
       last: r.legs[r.legs.length - 1],

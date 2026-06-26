@@ -251,7 +251,7 @@ export function lookupAirport(iata: string): AirportRecord | null {
 export function formatAirportPoint(iata: string): string {
   const info = lookupAirport(iata);
   if (!info) return iata;
-  return `${iata} (${info.city})`;
+  return `${iata} (${info.city}, ${info.country})`;
 }
 
 export function searchAliases(iata: string): string[] {

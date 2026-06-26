@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { syncEndDateToStartMonth } from "../dateUtils";
 import { AirportSearchInput } from "./AirportSearchInput";
 import { apiMultiCity } from "../api";
 import type {
@@ -17,7 +18,13 @@ function formatStops(leg: LegResult): string {
   if (leg.stops === null) return "—";
   if (leg.stops === 0) return "Directo";
   if (leg.stopDetails?.length) {
-    const places = leg.stopDetails.map((s) => `${s.iata} (${s.city})`).join(", ");
+    const places = leg.stopDetails
+      .map((s) =>
+        s.country
+          ? `${s.iata} (${s.city}, ${s.country})`
+          : `${s.iata} (${s.city})`,
+      )
+      .join(", ");
     return `${leg.stops} escala${leg.stops > 1 ? "s" : ""}: ${places}`;
   }
   return `${leg.stops} escala${leg.stops > 1 ? "s" : ""}`;
@@ -147,6 +154,9 @@ export function MultiCitySection() {
         idx === i ? { ...stop, [field]: field === "destination" ? val.toUpperCase() : val } : stop,
       ),
     );
+    if (i === 0 && field === "date") {
+      setFixedReturnDate((prev) => syncEndDateToStartMonth(val, prev));
+    }
   }
 
   // ---- Optimize dest helpers ----
@@ -327,7 +337,11 @@ export function MultiCitySection() {
               <input
                 type="date"
                 value={optStart}
-                onChange={(e) => setOptStart(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setOptStart(next);
+                  setOptEnd((prev) => syncEndDateToStartMonth(next, prev));
+                }}
               />
             </div>
             <div className="form-group">

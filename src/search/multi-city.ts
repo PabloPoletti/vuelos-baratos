@@ -31,6 +31,7 @@
 
 import { searchGoogleFlights, filterByDuration } from "./google-flights";
 import { formatAirportPoint, lookupAirport } from "./airport-display";
+import { airlineDisplayNames } from "./airline-names";
 import { TTL, cacheFlights, flightCacheKey, getCachedFlights } from "./cache";
 import type { FlightResult, SearchOptions } from "./types";
 
@@ -72,6 +73,7 @@ export interface OptimizeModeOptions {
 export interface LegStopDetail {
   iata: string;
   city: string;
+  country: string;
 }
 
 export interface LegResult {
@@ -221,6 +223,7 @@ function buildLegRoute(flight: FlightResult): {
       stopDetails.push({
         iata: leg.arrivalAirport,
         city: info?.city ?? leg.arrivalAirport,
+        country: info?.country ?? "",
       });
     }
     points.push(formatAirportPoint(leg.arrivalAirport));
@@ -236,9 +239,10 @@ function cheapestFromFlights(flights: FlightResult[]): LegMemoEntry | null {
 
   const cheapest = effective.reduce((best, f) => (f.price < best.price ? f : best));
   const { stopDetails, route } = buildLegRoute(cheapest);
+  const airlines = airlineDisplayNames(cheapest.legs.map((l) => l.airline));
   return {
     price: cheapest.price,
-    airlines: cheapest.airlines,
+    airlines,
     stops: cheapest.stops,
     stopDetails,
     route,

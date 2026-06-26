@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { syncEndDateToStartMonth } from "../dateUtils";
 import { AirportSearchInput } from "./AirportSearchInput";
 import { apiSearch } from "../api";
 import type { FlightResult, SearchError } from "../types";
@@ -106,7 +107,13 @@ export function SearchSection() {
             <input
               type="date"
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDate(next);
+                if (isRoundTrip) {
+                  setReturnDate((prev) => syncEndDateToStartMonth(next, prev));
+                }
+              }}
             />
           </div>
           <div className="form-group">

@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { syncEndDateToStartMonth } from "../dateUtils";
 import { AirportSearchInput } from "./AirportSearchInput";
 import { apiSearchDates } from "../api";
 import type { DateRangeResponse, DateResult } from "../types";
@@ -122,7 +123,11 @@ export function SearchDatesSection() {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setStartDate(next);
+                setEndDate((prev) => syncEndDateToStartMonth(next, prev));
+              }}
             />
           </div>
           <div className="form-group">
