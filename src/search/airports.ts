@@ -4,6 +4,7 @@
  */
 
 import airportsData from "../data/airports-iata.json";
+import { localizeAirport, normalizeText, searchableTexts, getPriorityBonus } from "./airport-display";
 
 export interface AirportRecord {
   iata: string;
@@ -15,23 +16,26 @@ export interface AirportRecord {
 const AIRPORTS = airportsData as AirportRecord[];
 
 function scoreMatch(a: AirportRecord, q: string): number {
-  const iata = a.iata.toLowerCase();
-  const city = a.city.toLowerCase();
-  const name = a.name.toLowerCase();
+  const qn = normalizeText(q);
+  const texts = searchableTexts(a);
 
-  if (iata === q) return 100;
-  if (iata.startsWith(q)) return 90;
-  if (city === q) return 85;
-  if (city.startsWith(q)) return 80;
-  if (name.startsWith(q)) return 70;
-  if (city.includes(q)) return 60;
-  if (name.includes(q)) return 50;
-  if (iata.includes(q)) return 40;
-  return 0;
+  let best = 0;
+  for (const text of texts) {
+    if (text === qn) best = Math.max(best, 100);
+    else if (text.startsWith(qn)) best = Math.max(best, 85);
+    else if (text.includes(qn)) best = Math.max(best, 60);
+  }
+
+  // IATA prefix bonus
+  if (a.iata.toLowerCase().startsWith(qn)) best = Math.max(best, 90);
+
+  best += getPriorityBonus(a.iata, q);
+
+  return best;
 }
 
 export function searchAirports(query: string, limit = 10): AirportRecord[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (q.length < 1) return [];
 
   const scored: { airport: AirportRecord; score: number }[] = [];
@@ -48,7 +52,9 @@ export function searchAirports(query: string, limit = 10): AirportRecord[] {
       a.airport.iata.localeCompare(b.airport.iata),
   );
 
-  return scored.slice(0, limit).map((s) => s.airport);
+  return scored.slice(0, limit).map((s) => localizeAirport(s.airport));
 }
 
 export const AIRPORT_DATASET_SIZE = AIRPORTS.length;
+
+export { lookupAirport, formatAirportPoint } from "./airport-display";

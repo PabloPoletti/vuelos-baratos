@@ -64,6 +64,11 @@ export interface DateRangeResponse {
 
 // ---- /api/multi-city ----
 
+export interface LegStopDetail {
+  iata: string;
+  city: string;
+}
+
 export interface LegResult {
   from: string;
   to: string;
@@ -72,6 +77,8 @@ export interface LegResult {
   currency: string;
   airlines: string[];
   stops: number | null;
+  stopDetails: LegStopDetail[];
+  route: string;
   error: string | null;
 }
 

@@ -30,6 +30,7 @@
  */
 
 import { searchGoogleFlights, filterByDuration } from "./google-flights";
+import { formatAirportPoint, lookupAirport } from "./airport-display";
 import { TTL, cacheFlights, flightCacheKey, getCachedFlights } from "./cache";
 import type { FlightResult, SearchOptions } from "./types";
 
@@ -68,6 +69,11 @@ export interface OptimizeModeOptions {
   currency?: string;
 }
 
+export interface LegStopDetail {
+  iata: string;
+  city: string;
+}
+
 export interface LegResult {
   from: string;
   to: string;
@@ -78,6 +84,10 @@ export interface LegResult {
   airlines: string[];
   /** Stops on the cheapest option; null when no result. */
   stops: number | null;
+  /** Connection airports with city names (empty when direct). */
+  stopDetails: LegStopDetail[];
+  /** Full route with cities, e.g. "EZE (Buenos Aires) → BCN (Barcelona) → LHR (Londres)" */
+  route: string;
   error: string | null;
 }
 
@@ -185,6 +195,38 @@ interface LegMemoEntry {
   price: number;
   airlines: string[];
   stops: number;
+  stopDetails: LegStopDetail[];
+  route: string;
+}
+
+function buildLegRoute(flight: FlightResult): {
+  stopDetails: LegStopDetail[];
+  route: string;
+} {
+  const legs = flight.legs;
+  if (legs.length === 0) {
+    return { stopDetails: [], route: "" };
+  }
+
+  const points: string[] = [];
+  const first = legs[0];
+  if (first) points.push(formatAirportPoint(first.departureAirport));
+
+  const stopDetails: LegStopDetail[] = [];
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    if (!leg) continue;
+    if (i < legs.length - 1) {
+      const info = lookupAirport(leg.arrivalAirport);
+      stopDetails.push({
+        iata: leg.arrivalAirport,
+        city: info?.city ?? leg.arrivalAirport,
+      });
+    }
+    points.push(formatAirportPoint(leg.arrivalAirport));
+  }
+
+  return { stopDetails, route: points.join(" → ") };
 }
 
 function cheapestFromFlights(flights: FlightResult[]): LegMemoEntry | null {
@@ -193,10 +235,13 @@ function cheapestFromFlights(flights: FlightResult[]): LegMemoEntry | null {
   if (effective.length === 0) return null;
 
   const cheapest = effective.reduce((best, f) => (f.price < best.price ? f : best));
+  const { stopDetails, route } = buildLegRoute(cheapest);
   return {
     price: cheapest.price,
     airlines: cheapest.airlines,
     stops: cheapest.stops,
+    stopDetails,
+    route,
   };
 }
 
@@ -213,6 +258,8 @@ function legResultFromSpec(
       currency,
       airlines: [],
       stops: null,
+      stopDetails: [],
+      route: "",
       error: errorOverride,
     };
   }
@@ -223,6 +270,8 @@ function legResultFromSpec(
       currency,
       airlines: [],
       stops: null,
+      stopDetails: [],
+      route: "",
       error: "No flights found for this leg",
     };
   }
@@ -232,6 +281,8 @@ function legResultFromSpec(
     currency,
     airlines: entry.airlines,
     stops: entry.stops,
+    stopDetails: entry.stopDetails,
+    route: entry.route,
     error: null,
   };
 }

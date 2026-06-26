@@ -13,10 +13,14 @@ import type {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function formatStops(stops: number | null): string {
-  if (stops === null) return "—";
-  if (stops === 0) return "Directo";
-  return `${stops} escala${stops > 1 ? "s" : ""}`;
+function formatStops(leg: LegResult): string {
+  if (leg.stops === null) return "—";
+  if (leg.stops === 0) return "Directo";
+  if (leg.stopDetails?.length) {
+    const places = leg.stopDetails.map((s) => `${s.iata} (${s.city})`).join(", ");
+    return `${leg.stops} escala${leg.stops > 1 ? "s" : ""}: ${places}`;
+  }
+  return `${leg.stops} escala${leg.stops > 1 ? "s" : ""}`;
 }
 
 function LegTable({ legs }: { legs: LegResult[] }) {
@@ -27,6 +31,7 @@ function LegTable({ legs }: { legs: LegResult[] }) {
           <th>Desde</th>
           <th>Hacia</th>
           <th>Fecha</th>
+          <th>Ruta</th>
           <th>Aerolínea</th>
           <th>Escalas</th>
           <th>Precio</th>
@@ -38,8 +43,9 @@ function LegTable({ legs }: { legs: LegResult[] }) {
             <td>{l.from}</td>
             <td>{l.to}</td>
             <td style={{ whiteSpace: "nowrap" }}>{l.date}</td>
+            <td className="td-route">{l.route || `${l.from} → ${l.to}`}</td>
             <td>{l.airlines?.length ? l.airlines.join(", ") : "—"}</td>
-            <td>{formatStops(l.stops)}</td>
+            <td>{formatStops(l)}</td>
             <td className="td-price">
               {l.price !== null ? (
                 <>

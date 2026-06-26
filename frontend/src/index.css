@@ -503,6 +503,13 @@ tr:hover td {
   padding: 0.45rem 0.75rem;
 }
 
+.td-route {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  max-width: 220px;
+  line-height: 1.35;
+}
+
 /* ===== Chart legend ===== */
 .chart-legend {
   display: flex;
